@@ -52,6 +52,7 @@
 RNG_HandleTypeDef hrng;
 
 SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -60,6 +61,7 @@ SPI_HandleTypeDef hspi1;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_RNG_Init(void);
 /* USER CODE BEGIN PFP */
@@ -77,44 +79,40 @@ void SysTick_Handler (void)
    lv_tick_inc(1);    // 1 ms
 }
 
+int busySPIDMA = 0;
+
+void DMA2_Stream3_IRQHandler(void)
+{
+    HAL_DMA_IRQHandler(&hdma_spi1_tx);
+//    HAL_GPIO_WritePin(GPIOC, CS_Pin, GPIO_PIN_SET);
+	busySPIDMA = 0;
+}
+
 /* Display flushing */
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
-    uint32_t w = (area->x2 - area->x1 + 1);
+	while (busySPIDMA) {
+		  HAL_Delay(1);
+	}
+	busySPIDMA = 1;
+
+	uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
 
-	register int x1 = area->x1;
-	register int y1 = area->y1;
-	register int x2 = area->x2;
-	register int y2 = area->y2;
+	ILI9341_Set_Address(area->x1, area->y1, area->x2, area->y2);
 
-	ILI9341_Set_Address(x1, y1, x2, y2);
-
-	HAL_GPIO_WritePin(GPIOC, DC_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(GPIOC, CS_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOC, DC_Pin, GPIO_PIN_SET);
 
-	HAL_SPI_Transmit(&hspi1, (unsigned char*)color_p, w*h*2, 10);
+	HAL_SPI_Transmit_DMA(&hspi1, (unsigned char*)color_p, w*h*2);
 
-	HAL_GPIO_WritePin(GPIOC, CS_Pin, GPIO_PIN_SET);
-
-
-
-//	ILI9341_Draw_Image((const char*)color_p->full, SCREEN_HORIZONTAL_1);
-//    ILI9341_Set_Rotation(SCREEN_HORIZONTAL_2);
-//
-//	int32_t x, y;
-//	    for(y = area->y1; y <= area->y2; y++) {
-//	        for(x = area->x1; x <= area->x2; x++) {
-//				ILI9341_Draw_Pixel(x, y, color_p->full);
-//	            color_p++;
-//	        }
-//	    }
-
+//	HAL_SPI_Transmit(&hspi1, (unsigned char*)color_p, w*h*2, 10);
+//	HAL_GPIO_WritePin(GPIOC, CS_Pin, GPIO_PIN_SET);
     lv_disp_flush_ready(disp);
 }
 
 static lv_disp_buf_t disp_buf;
-static lv_color_t buf[LV_HOR_RES_MAX * LV_VER_RES_MAX/2];
+static lv_color_t buf[LV_HOR_RES_MAX * LV_VER_RES_MAX/4];
 
 /* USER CODE END 0 */
 
@@ -146,6 +144,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI1_Init();
   MX_RNG_Init();
   /* USER CODE BEGIN 2 */
@@ -164,6 +163,7 @@ int main(void)
   disp_drv.flush_cb = my_disp_flush;
   disp_drv.buffer = &disp_buf;
   lv_disp_drv_register(&disp_drv);
+  HAL_Delay(25);
 
 //  tft_init();
 
@@ -174,8 +174,8 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1){
-	  lv_task_handler();
 	  HAL_Delay(25);
+	  lv_task_handler();
   }
 
   while (1)
@@ -484,6 +484,22 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
 
 }
 
